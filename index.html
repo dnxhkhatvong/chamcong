@@ -170,12 +170,23 @@
   .tbadge.biz{background:var(--amber-bg);color:var(--amber)}
   .tbadge.sick{background:var(--red-bg);color:var(--red)}
   .tbadge.unpaid{background:var(--slate-bg);color:var(--slate)}
+  .tbadge.wfh{background:#DBF1EC;color:#0D8A74}
+  .tbadge.online{background:#ECE7FB;color:#6D4FD0}
 
   /* pill mở rộng cho loại nghỉ */
   .pill.leave{background:#E8EDFB;color:#3B5BC9}
   .pill.biz{background:var(--amber-bg);color:var(--amber)}
   .pill.sick{background:var(--red-bg);color:var(--red)}
   .pill.unpaid{background:var(--slate-bg);color:var(--slate)}
+  .pill.wfh{background:#DBF1EC;color:#0D8A74}
+  .pill.online{background:#ECE7FB;color:#6D4FD0}
+
+  /* chọn hình thức làm việc trên màn chấm công */
+  .mode-sel{display:flex;gap:7px;margin-top:14px}
+  .mode-chip{flex:1;border:1.5px solid var(--border);background:var(--card);border-radius:11px;
+    padding:10px 6px;font-size:13px;font-weight:700;color:var(--muted);cursor:pointer;font-family:var(--sans);transition:.12s}
+  .mode-chip:active{transform:scale(.97)}
+  .mode-chip.on{border-color:var(--midnight);background:var(--midnight);color:var(--brass-hi)}
 
   /* nút phụ ở header + chip chọn loại */
   .add-btn.alt{background:var(--card);color:var(--ink);border:1.5px solid var(--border)}
@@ -498,7 +509,7 @@
 /* ================= CẤU HÌNH KẾT NỐI GOOGLE SHEET =================
    Dán URL Web App (kết thúc bằng /exec) của Google Apps Script vào giữa hai dấu nháy.
    Xem README.md để lấy URL này.                                              */
-const API_URL = "https://script.google.com/macros/s/AKfycbyvozAlbbSIwVgJ71o7cv1nq1DHHkeYUwLbeBS0K2FqVo7oWQEx-iHdd4HxrjhOWmEv/exec";
+const API_URL = "https://script.google.com/macros/s/AKfycby18KpLQhqz02ZGs1M2O9DFQGZSpWMVy3vUUA7KeJGs1rgs1qzG0jIGGzEF0a406D2v/exec";
 // Mã bí mật (tùy chọn). Nếu đặt, phải TRÙNG với biến TOKEN trong Code.gs. Để trống = tắt.
 const API_TOKEN = "";
 // Mật khẩu quản trị: bắt buộc để thêm/sửa/xóa nhân viên và đổi cài đặt.
@@ -526,8 +537,8 @@ async function persist(action, payload){
 }
 
 /* ---- Ánh xạ giữa cột Google Sheet (tiếng Việt) và dữ liệu trong app ---- */
-const LOAI2TYPE = {'Làm việc':'work','Nghỉ phép':'leave','Công tác':'biz','Nghỉ ốm':'sick','Không lương':'unpaid'};
-const TYPE2LOAI = {work:'Làm việc',leave:'Nghỉ phép',biz:'Công tác',sick:'Nghỉ ốm',unpaid:'Không lương'};
+const LOAI2TYPE = {'Làm việc':'work','Làm việc tại nhà':'wfh','Làm việc online':'online','Nghỉ phép':'leave','Công tác':'biz','Nghỉ ốm':'sick','Không lương':'unpaid'};
+const TYPE2LOAI = {work:'Làm việc',wfh:'Làm việc tại nhà',online:'Làm việc online',leave:'Nghỉ phép',biz:'Công tác',sick:'Nghỉ ốm',unpaid:'Không lương'};
 const normDate = v => { if(!v) return v; const s=String(v); const m=s.match(/^(\d{4})-(\d{2})-(\d{2})/); if(m) return `${m[1]}-${m[2]}-${m[3]}`;
   const d=new Date(v); return isNaN(d)?s:`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; };
 const normHM = v => { if(v===''||v==null) return null; const s=String(v); const m=s.match(/(\d{1,2}):(\d{2})/); return m?`${pad(+m[1])}:${m[2]}`:s; };
@@ -604,12 +615,19 @@ function fmtDate(key){ const [y,m,d]=key.split('-'); return `${d}/${m}` }
 // loại bản ghi: work | leave | biz | sick | unpaid
 const TYPES={
   work:{label:'Làm việc',cls:'work'},
+  wfh:{label:'Làm việc tại nhà',cls:'wfh'},
+  online:{label:'Làm việc online',cls:'online'},
   leave:{label:'Nghỉ phép',cls:'leave'},
   biz:{label:'Công tác',cls:'biz'},
   sick:{label:'Nghỉ ốm',cls:'sick'},
   unpaid:{label:'Không lương',cls:'unpaid'}
 };
 const recType = r => (r && r.type) || 'work';
+const isWorkType = ty => ty==='work' || ty==='wfh' || ty==='online';
+// Hình thức làm việc chọn trước khi chấm công VÀO
+let workMode = 'work';
+const MODE_LABEL = { work:'Tại văn phòng', wfh:'Tại nhà', online:'Online' };
+function setWorkMode(m){ workMode = m; renderStatus(); }
 
 // tính công của 1 record -> {work, late, ot}
 function calc(rec){
@@ -649,14 +667,21 @@ function renderStatus(){
   const ty = recType(r);
   const isOff = (ty==='leave'||ty==='sick'||ty==='unpaid');
   const inT = r?.in || null, outT = r?.out || null;
-  let dot='var(--faint)', txt='Chưa chấm công', sub='Nhấn “Chấm công vào” khi bắt đầu ngày làm.';
+  const canCheckIn = !inT && !isOff;              // chưa chấm & không phải ngày nghỉ
+  const modeTxt = ty==='wfh' ? ' tại nhà' : ty==='online' ? ' online' : '';
+  let dot='var(--faint)', txt='Chưa chấm công', sub='Chọn hình thức rồi nhấn “Vào” khi bắt đầu ngày làm.';
   if(isOff){ dot='#3B5BC9'; txt=`${TYPES[ty].label} hôm nay`; sub=r.note||'Hôm nay không tính công.'; }
   else if(ty==='biz' && !inT){ dot='var(--amber)'; txt='Công tác hôm nay'; sub=r.note||'Có thể chấm giờ nếu cần theo dõi.'; }
-  else if(inT && !outT){ const c=calc(r); dot='var(--green)'; txt=ty==='biz'?'Đang công tác':'Đang làm việc'; sub=c.late>0?`Vào trễ ${c.late} phút`:'Đúng giờ · chúc một ngày tốt lành'; }
-  else if(inT && outT){ const c=calc(r); dot='var(--slate)'; txt='Đã kết thúc ngày làm'; sub=`Tổng ${hrs(c.workH)}${c.ot>0?' · tăng ca '+hrs(c.ot):''}`; }
+  else if(inT && !outT){ const c=calc(r); dot='var(--green)'; txt=ty==='biz'?'Đang công tác':`Đang làm việc${modeTxt}`; sub=c.late>0?`Vào trễ ${c.late} phút`:'Đúng giờ · chúc một ngày tốt lành'; }
+  else if(inT && outT){ const c=calc(r); dot='var(--slate)'; txt=`Đã kết thúc ngày làm${modeTxt}`; sub=`Tổng ${hrs(c.workH)}${c.ot>0?' · tăng ca '+hrs(c.ot):''}`; }
+  const modeSel = canCheckIn ? `
+    <div class="mode-sel">
+      ${['work','wfh','online'].map(m=>`<button class="mode-chip${workMode===m?' on':''}" onclick="setWorkMode('${m}')">${MODE_LABEL[m]}</button>`).join('')}
+    </div>` : '';
   card.innerHTML = `
     <div class="status-row"><span class="status-dot" style="background:${dot}"></span>
       <div><div class="status-text">${txt}</div><div class="status-sub">${sub}</div></div></div>
+    ${modeSel}
     <div class="times">
       <div class="time-box"><div class="lab">Giờ vào</div><div class="val">${isOff?'—':(inT||'--:--')}</div></div>
       <div class="time-box"><div class="lab">Giờ ra</div><div class="val">${isOff?'—':(outT||'--:--')}</div></div>
@@ -684,7 +709,10 @@ function renderBoard(){
     let pill;
     if(ty==='leave'||ty==='sick'||ty==='unpaid'){ pill = `<span class="pill ${TYPES[ty].cls}">${TYPES[ty].label}</span>`; }
     else if(ty==='biz' && !r.in){ pill = `<span class="pill biz">Công tác</span>`; }
-    else if(r?.in && !r.out){ present++; const c=calc(r); const lbl=ty==='biz'?'Công tác':'Đang làm'; pill = c.late>0?`<span class="pill late">Trễ ${c.late}′</span>`:`<span class="pill ${ty==='biz'?'biz':'in'}">${lbl}</span>`; }
+    else if(r?.in && !r.out){ present++; const c=calc(r);
+      const lbl = ty==='biz'?'Công tác' : ty==='wfh'?'Tại nhà' : ty==='online'?'Online' : 'Đang làm';
+      const cls = (ty==='biz'||ty==='wfh'||ty==='online')?TYPES[ty].cls:'in';
+      pill = c.late>0?`<span class="pill late">${ty==='wfh'||ty==='online'?lbl+' · ':''}Trễ ${c.late}′</span>`:`<span class="pill ${cls}">${lbl}</span>`; }
     else if(r?.in && r.out){ pill = `<span class="pill out">Đã ra ${r.out}</span>`; }
     else{ pill = `<span class="pill absent">Chưa vào</span>`; }
     return `<div class="board-item">
@@ -701,12 +729,14 @@ async function checkIn(){
   const emp=employees.find(e=>e.id===selectedEmp); if(!emp) return;
   const t=todayKey();
   if(records.some(r=>r.empId===selectedEmp && r.date===t)){ toast('Hôm nay đã chấm công vào rồi'); return; }
-  if(!(await requirePin(emp,'Chấm công VÀO'))) return;
+  if(!(await requirePin(emp,`Chấm công VÀO · ${MODE_LABEL[workMode]}`))) return;
   const time=nowHM();
-  const rec={id:uid(),empId:selectedEmp,date:t,in:time,out:null,type:'work',note:''};
+  const rec={id:uid(),empId:selectedEmp,date:t,in:time,out:null,type:workMode,note:''};
   records.push(rec);
   const c=calc(rec);
-  toast(`Đã vào lúc ${time}${c.late>0?` · trễ ${c.late}′`:''}`, true);
+  const modeNote = workMode==='work' ? '' : ` · ${MODE_LABEL[workMode].toLowerCase()}`;
+  toast(`Đã vào lúc ${time}${modeNote}${c.late>0?` · trễ ${c.late}′`:''}`, true);
+  workMode='work';
   renderStatus(); renderBoard();
   await persist('saveRecord', {data: toSheetRec(rec)});
 }
@@ -888,7 +918,7 @@ function exportExcel(){
     const rs=rows.filter(r=>r.empId===e.id);
     let days=0,tot=0,ot=0,late=0,lv=0,bz=0,sk=0,up=0;
     rs.forEach(r=>{ const c=calc(r); const ty=recType(r);
-      if((ty==='work'&&r.in)||ty==='biz') days++;
+      if((isWorkType(ty)&&r.in)||ty==='biz') days++;
       if(c.workH!=null) tot+=c.workH; ot+=c.ot; if(c.late>0) late++;
       if(ty==='leave')lv++; if(ty==='biz')bz++; if(ty==='sick')sk++; if(ty==='unpaid')up++; });
     summary.push([e.name, e.dept||'', days, +tot.toFixed(1), late, +ot.toFixed(1), lv, bz, sk, up]);
@@ -928,7 +958,7 @@ function renderReport(){
     const rs=records.filter(r=>r.empId===e.id && r.date.startsWith(month));
     let days=0, total=0, ot=0, lateCnt=0, lv=0, bz=0;
     rs.forEach(r=>{ const c=calc(r); const ty=recType(r);
-      if((ty==='work'&&r.in)||ty==='biz') days++;
+      if((isWorkType(ty)&&r.in)||ty==='biz') days++;
       if(c.workH!=null) total+=c.workH; ot+=c.ot; if(c.late>0) lateCnt++;
       if(ty==='leave') lv++; if(ty==='biz') bz++; });
     return `<div class="rep-card">
